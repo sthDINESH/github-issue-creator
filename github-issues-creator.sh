@@ -241,6 +241,81 @@ get_or_create_milestone() {
     echo "$milestone_number"
 }
 
+# Check if label exists
+label_exists() {
+    local label_name="$1"
+    
+    gh api "repos/$REPO/labels" \
+        --jq ".[] | select(.name == \"$label_name\") | .name" 2>/dev/null | grep -q "."
+}
+
+# Create label if it doesn't exist
+create_label_if_needed() {
+    local label_name="$1"
+    
+    if label_exists "$label_name"; then
+        return 0
+    fi
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        echo -e "${YELLOW}[DRY RUN]${NC} Would create label: ${CYAN}$label_name${NC}" >&2
+        return 0
+    fi
+    
+    # Default colors for common label types
+    local color="EDEDED"  # Default gray
+    case "$label_name" in
+        user-story)       color="0052CC" ;;  # Blue
+        must-have)        color="D93F0B" ;;  # Red
+        should-have)      color="FBCA04" ;;  # Yellow
+        could-have)       color="C2E0C6" ;;  # Light green
+        frontend)         color="1D76DB" ;;  # Blue
+        backend)          color="0E8A16" ;;  # Green
+        ai-integration)   color="5319E7" ;;  # Purple
+        deployment)       color="0E8A16" ;;  # Green
+        devops)           color="FBCA04" ;;  # Yellow
+        testing)          color="D4C5F9" ;;  # Light purple
+        qa)               color="C2E0C6" ;;  # Light green
+        ux)               color="BFD4F2" ;;  # Light blue
+        bug)              color="D73A4A" ;;  # Red
+        enhancement)      color="A2EEEF" ;;  # Light cyan
+        documentation)    color="0075CA" ;;  # Blue
+    esac
+    
+    echo -e "${YELLOW}Creating label: ${CYAN}$label_name${NC}" >&2
+    gh api "repos/$REPO/labels" \
+        -f name="$label_name" \
+        -f color="$color" \
+        > /dev/null 2>&1
+}
+
+# Extract and create all labels from YAML file
+prepare_labels() {
+    local yaml_file="$1"
+    
+    # Get all unique labels from the YAML file
+    local labels_list
+    labels_list=$(yq eval '.issues[].labels[]' "$yaml_file" 2>/dev/null | sort -u)
+    
+    if [[ -z "$labels_list" ]]; then
+        return 0
+    fi
+    
+    echo -e "${BLUE}Checking labels...${NC}"
+    
+    local label_count=0
+    while IFS= read -r label; do
+        if [[ -n "$label" ]]; then
+            create_label_if_needed "$label"
+            ((label_count++))
+        fi
+    done <<< "$labels_list"
+    
+    if [[ $label_count -gt 0 ]]; then
+        echo -e "${GREEN}✓ Labels ready ($label_count unique labels)${NC}\n"
+    fi
+}
+
 # Create a single issue
 create_issue() {
     local title="$1"
@@ -309,6 +384,9 @@ process_yaml_file() {
     sprint_num=$(yq eval '.sprint // "N/A"' "$yaml_file")
     local milestone_title
     milestone_title=$(yq eval '.milestone' "$yaml_file")
+    
+    # Prepare labels (create if they don't exist)
+    prepare_labels "$yaml_file"
     
     # Get or create milestone (only if specified)
     local milestone_number=""
