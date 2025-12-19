@@ -217,28 +217,28 @@ get_or_create_milestone() {
     local milestone_title="$1"
     
     # Check if milestone exists
-    local milestone_number
-    milestone_number=$(gh api "repos/$REPO/milestones" \
-        --jq ".[] | select(.title == \"$milestone_title\") | .number" 2>/dev/null || echo "")
+    local milestone_exists
+    milestone_exists=$(gh api "repos/$REPO/milestones" \
+        --jq ".[] | select(.title == \"$milestone_title\") | .title" 2>/dev/null || echo "")
     
-    if [[ -n "$milestone_number" ]]; then
-        echo "$milestone_number"
+    if [[ -n "$milestone_exists" ]]; then
+        echo "$milestone_title"
         return
     fi
     
     # Create milestone if it doesn't exist
     if [[ "$DRY_RUN" == true ]]; then
-        echo "DRY_RUN_MILESTONE"
+        echo "$milestone_title"
         return
     fi
     
     echo -e "${YELLOW}Creating milestone: $milestone_title${NC}" >&2
-    milestone_number=$(gh api "repos/$REPO/milestones" \
+    gh api "repos/$REPO/milestones" \
         -f title="$milestone_title" \
         -f state="open" \
-        --jq ".number")
+        > /dev/null 2>&1
     
-    echo "$milestone_number"
+    echo "$milestone_title"
 }
 
 # Check if label exists
@@ -322,6 +322,7 @@ create_issue() {
     local body="$2"
     local labels="$3"
     local milestone="$4"
+    local milestone_display="$5"  # Optional: display name for milestone (title instead of ID)
     
     if [[ "$DRY_RUN" == true ]]; then
         echo -e "${YELLOW}[DRY RUN]${NC} Would create issue:"
@@ -330,7 +331,11 @@ create_issue() {
             echo -e "  ${BLUE}Labels:${NC} $labels"
         fi
         if [[ -n "$milestone" && "$milestone" != "null" && "$milestone" != "DRY_RUN_MILESTONE" ]]; then
-            echo -e "  ${BLUE}Milestone:${NC} $milestone"
+            if [[ -n "$milestone_display" ]]; then
+                echo -e "  ${BLUE}Milestone:${NC} $milestone_display"
+            else
+                echo -e "  ${BLUE}Milestone:${NC} $milestone"
+            fi
         fi
         echo -e "  ${BLUE}Body:${NC} ${#body} characters"
         echo ""
@@ -348,8 +353,8 @@ create_issue() {
         done
     fi
     
-    # Add milestone if provided
-    if [[ -n "$milestone" && "$milestone" != "null" && "$milestone" != "DRY_RUN_MILESTONE" ]]; then
+    # Add milestone if provided (use title directly)
+    if [[ -n "$milestone" && "$milestone" != "null" ]]; then
         cmd+=(--milestone "$milestone")
     fi
     
@@ -389,10 +394,10 @@ process_yaml_file() {
     prepare_labels "$yaml_file"
     
     # Get or create milestone (only if specified)
-    local milestone_number=""
+    local milestone_value=""
     if [[ -n "$milestone_title" && "$milestone_title" != "null" ]]; then
-        milestone_number=$(get_or_create_milestone "$milestone_title")
-        echo -e "${BLUE}Milestone:${NC} $milestone_title ${CYAN}(ID: $milestone_number)${NC}"
+        milestone_value=$(get_or_create_milestone "$milestone_title")
+        echo -e "${BLUE}Milestone:${NC} $milestone_value"
     fi
     
     # Display sprint if provided
@@ -425,7 +430,7 @@ process_yaml_file() {
         labels=$(yq eval ".issues[$i].labels // [] | join(\",\")" "$yaml_file")
         
         # Create issue
-        if create_issue "$title" "$body" "$labels" "$milestone_number"; then
+        if create_issue "$title" "$body" "$labels" "$milestone_value" "$milestone_title"; then
             ((success++))
         else
             ((failed++))
